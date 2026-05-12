@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SecureBank - Vulnerable</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; }
+        .header { background: #1565c0; color: white; padding: 15px; border-radius: 6px; }
+        .card { border: 1px solid #ccc; padding: 15px; margin-top: 15px; border-radius: 6px; }
+        .danger-label { background: #ffebee; color: #c62828; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+        .balance { font-size: 2em; color: #1565c0; font-weight: bold; }
+        input { padding: 6px; margin: 4px 0; width: 200px; }
+        button { background: #1565c0; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        .log { background: #f5f5f5; padding: 10px; font-family: monospace; font-size: 13px; }
+        .log div { border-bottom: 1px solid #ddd; padding: 4px 0; }
+        .alert { background: #fff3e0; border-left: 4px solid #e65100; padding: 10px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 style="margin:0">SecureBank <span class="danger-label">VULNERABLE (no CSRF protection)</span></h2>
+        <p style="margin:4px 0 0">Logged in as: <strong>Alice</strong> &nbsp;|&nbsp; Session cookie: <code id="cookieDisplay"></code></p>
+    </div>
+
+    <div class="card">
+        <h3>Balance: <span class="balance" id="balance"></span></h3>
+    </div>
+
+    <div class="card">
+        <h3>Transfer Money</h3>
+        <form id="transferForm">
+            <label>Recipient: <input type="text" name="to" placeholder="e.g. Bob"></label><br>
+            <label>Amount ($): <input type="number" name="amount" placeholder="e.g. 100"></label><br><br>
+            <button type="submit">Send Transfer</button>
+        </form>
+        <!-- No CSRF token — any site can forge this request -->
+    </div>
+
+    <div class="card">
+        <h3>Transaction Log</h3>
+        <div class="log" id="log">No transactions yet.</div>
+    </div>
+
+    <div class="alert">
+        <strong>Lab note:</strong> Open <code>attacker.html</code> while this tab is open to simulate the attack.
+        The attacker page will forge a transfer request on your behalf without your knowledge.
+    </div>
+
+    <script>
+        // Simulate session cookie
+        document.cookie = "session_id=ALICE_SESSION_TOKEN; path=/";
+        document.getElementById('cookieDisplay').textContent = "session_id=ALICE_SESSION_TOKEN";
+
+        const STORAGE_KEY = 'csrf_bank_data';
+
+        function loadData() {
+            return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"balance":1000,"log":[]}');
+        }
+
+        function saveData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        function render() {
+            const data = loadData();
+            document.getElementById('balance').textContent = '$' + data.balance.toFixed(2);
+            const logEl = document.getElementById('log');
+            if (data.log.length === 0) {
+                logEl.innerHTML = 'No transactions yet.';
+            } else {
+                logEl.innerHTML = data.log.slice().reverse()
+                    .map(t => `<div>${t.time} — Sent <strong>$${t.amount}</strong> to <strong>${t.to}</strong> ${t.forged ? '<span style="color:red">[FORGED by attacker]</span>' : ''}</div>`)
+                    .join('');
+            }
+        }
+
+        function processTransfer(to, amount, forged = false) {
+            const data = loadData();
+            data.balance -= parseFloat(amount);
+            data.log.push({ to, amount, forged, time: new Date().toLocaleTimeString() });
+            saveData(data);
+            render();
+        }
+
+        // !! VULNERABILITY: processes any request that arrives with a valid session cookie
+        // No CSRF token check — the cookie alone is trusted
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('to') && params.get('amount')) {
+            const to = params.get('to');
+            const amount = params.get('amount');
+            processTransfer(to, amount, params.get('forged') === '1');
+            // Clean URL without reloading
+            history.replaceState({}, '', location.pathname);
+            alert(`Transfer processed!\n$${amount} sent to ${to}\n\n(Was this YOU? This is what CSRF looks like.)`);
+        }
+
+        document.getElementById('transferForm').addEventListener('submit', e => {
+            e.preventDefault();
+            const to = e.target.to.value.trim();
+            const amount = parseFloat(e.target.amount.value);
+            if (!to || !amount) return;
+            processTransfer(to, amount, false);
+            e.target.reset();
+        });
+
+        render();
+    </script>
+</body>
+</html>

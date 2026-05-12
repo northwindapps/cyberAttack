@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SecureBank - Protected</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; }
+        .header { background: #2e7d32; color: white; padding: 15px; border-radius: 6px; }
+        .card { border: 1px solid #ccc; padding: 15px; margin-top: 15px; border-radius: 6px; }
+        .safe-label { background: #e8f5e9; color: #1b5e20; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+        .balance { font-size: 2em; color: #2e7d32; font-weight: bold; }
+        input { padding: 6px; margin: 4px 0; width: 200px; }
+        button { background: #2e7d32; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        .log { background: #f5f5f5; padding: 10px; font-family: monospace; font-size: 13px; }
+        .log div { border-bottom: 1px solid #ddd; padding: 4px 0; }
+        .token-display { background: #e8f5e9; border: 1px solid #a5d6a7; padding: 10px; font-family: monospace; font-size: 12px; border-radius: 4px; }
+        .alert { background: #e8f5e9; border-left: 4px solid #2e7d32; padding: 10px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 style="margin:0">SecureBank <span class="safe-label">PROTECTED (CSRF token)</span></h2>
+        <p style="margin:4px 0 0">Logged in as: <strong>Alice</strong></p>
+    </div>
+
+    <div class="card">
+        <h3>Balance: <span class="balance" id="balance"></span></h3>
+    </div>
+
+    <div class="card">
+        <h3>Transfer Money</h3>
+        <form id="transferForm">
+            <label>Recipient: <input type="text" name="to" placeholder="e.g. Bob"></label><br>
+            <label>Amount ($): <input type="number" name="amount" placeholder="e.g. 100"></label><br>
+            <!-- CSRF token: generated per session, unknown to attacker -->
+            <input type="hidden" name="csrf_token" id="csrfTokenField">
+            <br>
+            <button type="submit">Send Transfer</button>
+        </form>
+
+        <div class="token-display" style="margin-top:12px">
+            <strong>CSRF Token (visible for demo):</strong><br>
+            <span id="tokenDisplay"></span><br>
+            <small style="color:#555">Stored in sessionStorage — attacker on another origin cannot read this.</small>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Transaction Log</h3>
+        <div class="log" id="log">No transactions yet.</div>
+    </div>
+
+    <div class="alert">
+        <strong>Try the attack:</strong> Open <code>attacker.html</code> — it will try to forge a transfer
+        to <em>this</em> page. Because the forged request has no valid CSRF token, it will be rejected.
+        The <strong>token changes every session</strong>, so the attacker can never guess it.
+    </div>
+
+    <script>
+        document.cookie = "session_id=ALICE_SESSION_TOKEN; path=/";
+
+        const STORAGE_KEY = 'csrf_bank_safe_data';
+
+        // Generate CSRF token once per session and store it
+        // sessionStorage is not accessible from other origins
+        if (!sessionStorage.getItem('csrf_token')) {
+            const token = crypto.getRandomValues(new Uint8Array(16));
+            sessionStorage.setItem('csrf_token', Array.from(token).map(b => b.toString(16).padStart(2, '0')).join(''));
+        }
+        const CSRF_TOKEN = sessionStorage.getItem('csrf_token');
+
+        // Inject token into the form and display it
+        document.getElementById('csrfTokenField').value = CSRF_TOKEN;
+        document.getElementById('tokenDisplay').textContent = CSRF_TOKEN;
+
+        function loadData() {
+            return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"balance":1000,"log":[]}');
+        }
+
+        function saveData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        function render() {
+            const data = loadData();
+            document.getElementById('balance').textContent = '$' + data.balance.toFixed(2);
+            const logEl = document.getElementById('log');
+            if (data.log.length === 0) {
+                logEl.innerHTML = 'No transactions yet.';
+            } else {
+                logEl.innerHTML = data.log.slice().reverse()
+                    .map(t => `<div>${t.time} — Sent <strong>$${t.amount}</strong> to <strong>${t.to}</strong></div>`)
+                    .join('');
+            }
+        }
+
+        // CSRF check: incoming request must include the correct token
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('to') && params.get('amount')) {
+            const incomingToken = params.get('csrf_token');
+            if (incomingToken === CSRF_TOKEN) {
+                // Legitimate request
+                const data = loadData();
+                data.balance -= parseFloat(params.get('amount'));
+                data.log.push({ to: params.get('to'), amount: params.get('amount'), time: new Date().toLocaleTimeString() });
+                saveData(data);
+                alert('Transfer approved — CSRF token matched.');
+            } else {
+                // Forged request — token missing or wrong
+                alert(`CSRF ATTACK BLOCKED!\n\nExpected token: ${CSRF_TOKEN}\nReceived token:  ${incomingToken || '(none)'}\n\nRequest rejected.`);
+            }
+            history.replaceState({}, '', location.pathname);
+        }
+
+        document.getElementById('transferForm').addEventListener('submit', e => {
+            e.preventDefault();
+            const to = e.target.to.value.trim();
+            const amount = parseFloat(e.target.amount.value);
+            if (!to || !amount) return;
+            const data = loadData();
+            data.balance -= amount;
+            data.log.push({ to, amount, time: new Date().toLocaleTimeString() });
+            saveData(data);
+            render();
+            e.target.reset();
+        });
+
+        render();
+    </script>
+</body>
+</html>

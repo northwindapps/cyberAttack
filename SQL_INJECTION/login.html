@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SQL Injection Lab - Vulnerable</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 700px; }
+        .header { background: #b71c1c; color: white; padding: 15px; border-radius: 6px; }
+        .danger-label { background: #ffcdd2; color: #b71c1c; padding: 3px 10px; border-radius: 4px; font-size: 13px; }
+        .card { border: 1px solid #ccc; padding: 15px; margin-top: 15px; border-radius: 6px; }
+        input { padding: 8px; width: 280px; margin: 4px 0; font-size: 14px; }
+        button { background: #b71c1c; color: white; padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .sql-box { background: #1e1e1e; color: #d4d4d4; padding: 12px; font-family: monospace; font-size: 13px; border-radius: 6px; margin-top: 8px; white-space: pre-wrap; word-break: break-all; }
+        .inject { color: #f44747; font-weight: bold; }
+        .normal { color: #9cdcfe; }
+        .keyword { color: #569cd6; }
+        .string { color: #ce9178; }
+        .result { padding: 12px; border-radius: 6px; margin-top: 10px; font-weight: bold; }
+        .success { background: #e8f5e9; color: #1b5e20; border-left: 4px solid #2e7d32; }
+        .fail { background: #ffebee; color: #b71c1c; border-left: 4px solid #c62828; }
+        table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+        th { background: #424242; color: white; padding: 6px 10px; text-align: left; }
+        td { border: 1px solid #ddd; padding: 6px 10px; }
+        .hint { background: #fff8e1; border-left: 4px solid #f9a825; padding: 10px; margin-top: 8px; font-size: 13px; }
+        .hint code { background: #eee; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2 style="margin:0">Login <span class="danger-label">VULNERABLE — SQL Injection</span></h2>
+    <p style="margin:4px 0 0; font-size:13px">Input is concatenated directly into the SQL query — no sanitization.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Sign In</h3>
+    <label>Username:<br><input type="text" id="username" placeholder="e.g. admin" oninput="updateQuery()"></label><br><br>
+    <label>Password:<br><input type="text" id="password" placeholder="e.g. password123" oninput="updateQuery()"></label><br><br>
+    <button onclick="login()">Login</button>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Live SQL Query (what the server runs)</h3>
+    <div class="sql-box" id="queryDisplay"></div>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+    <h3 style="margin-top:0">Result</h3>
+    <div id="resultBox"></div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Database (normally hidden from user)</h3>
+    <table>
+        <tr><th>id</th><th>username</th><th>password</th><th>role</th><th>balance</th></tr>
+        <tr><td>1</td><td>admin</td><td>s3cr3tPass!</td><td>admin</td><td>$99,999</td></tr>
+        <tr><td>2</td><td>alice</td><td>alice1234</td><td>user</td><td>$1,200</td></tr>
+        <tr><td>3</td><td>bob</td><td>bobpass99</td><td>user</td><td>$450</td></tr>
+        <tr><td>4</td><td>charlie</td><td>ch4rl1e!</td><td>user</td><td>$800</td></tr>
+    </table>
+
+    <div class="hint" style="margin-top:12px">
+        <strong>Try these attacks:</strong><br><br>
+        <strong>1. Auth bypass</strong> — Username: <code>admin' --</code> &nbsp; Password: <em>(anything)</em><br>
+        <em>Query becomes: WHERE username='admin'--' AND password='...' → comment kills password check</em><br><br>
+        <strong>2. Bypass without knowing username</strong> — Username: <code>' OR '1'='1' --</code><br>
+        <em>Condition is always true → logs in as first user in table</em><br><br>
+        <strong>3. UNION attack (dump all users)</strong> — Username: <code>' UNION SELECT * FROM users --</code><br>
+        <em>Appends a second SELECT → returns entire user table</em>
+    </div>
+</div>
+
+<script>
+    // Simulated in-memory database
+    const users = [
+        { id: 1, username: 'admin',   password: 's3cr3tPass!', role: 'admin',  balance: '$99,999' },
+        { id: 2, username: 'alice',   password: 'alice1234',   role: 'user',   balance: '$1,200'  },
+        { id: 3, username: 'bob',     password: 'bobpass99',   role: 'user',   balance: '$450'    },
+        { id: 4, username: 'charlie', password: 'ch4rl1e!',    role: 'user',   balance: '$800'    },
+    ];
+
+    function buildQuery(u, p) {
+        return `SELECT * FROM users WHERE username='${u}' AND password='${p}'`;
+    }
+
+    function updateQuery() {
+        const u = document.getElementById('username').value;
+        const p = document.getElementById('password').value;
+        const query = buildQuery(u, p);
+
+        // Highlight injected characters in red
+        const safeU = escapeHtml(u);
+        const safeP = escapeHtml(p);
+
+        const base  = `<span class="keyword">SELECT</span> * <span class="keyword">FROM</span> users <span class="keyword">WHERE</span> username=<span class="string">'`;
+        const uPart = `<span class="inject">${safeU}</span>`;
+        const mid   = `</span><span class="string">'</span> <span class="keyword">AND</span> password=<span class="string">'`;
+        const pPart = `<span class="inject">${safeP}</span>`;
+        const end   = `<span class="string">'</span>`;
+
+        document.getElementById('queryDisplay').innerHTML = base + uPart + mid + pPart + end;
+    }
+
+    function simulateQuery(query) {
+        const q = query.toLowerCase();
+
+        // Strip SQL comment (everything after --)
+        const noComment = query.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        const noCommentLower = noComment.toLowerCase();
+
+        // UNION attack — return all users
+        if (noCommentLower.includes('union') && noCommentLower.includes('select')) {
+            return { rows: users, note: 'UNION injected — entire table dumped' };
+        }
+
+        // Extract WHERE clause
+        const whereMatch = noCommentLower.match(/where\s+(.*)/s);
+        if (!whereMatch) return { rows: [], note: 'No WHERE clause found' };
+
+        const condition = whereMatch[1].trim();
+
+        // Always-true conditions
+        if (condition.includes("'1'='1'") || condition.includes("1=1") || condition.includes("'a'='a'")) {
+            return { rows: users, note: "Always-true condition — all rows returned" };
+        }
+
+        // Normal username/password extraction
+        const uMatch = noComment.match(/username='([^']*)'/i);
+        const pMatch = noComment.match(/password='([^']*)'/i);
+
+        if (!uMatch) return { rows: [], note: 'Could not parse username' };
+
+        const u = uMatch[1];
+        const p = pMatch ? pMatch[1] : null;
+
+        const found = users.filter(row =>
+            row.username === u && (p === null || row.password === p)
+        );
+
+        return { rows: found, note: null };
+    }
+
+    function login() {
+        const u = document.getElementById('username').value;
+        const p = document.getElementById('password').value;
+        const query = buildQuery(u, p);
+        const { rows, note } = simulateQuery(query);
+
+        const card = document.getElementById('resultCard');
+        const box  = document.getElementById('resultBox');
+        card.style.display = 'block';
+
+        if (rows.length === 0) {
+            box.innerHTML = `<div class="result fail">Login failed — no matching user.</div>`;
+            return;
+        }
+
+        const rowsHtml = rows.map(r =>
+            `<tr><td>${r.id}</td><td>${escapeHtml(r.username)}</td><td>${escapeHtml(r.password)}</td><td>${r.role}</td><td>${r.balance}</td></tr>`
+        ).join('');
+
+        box.innerHTML = `
+            <div class="result success">
+                Login SUCCESS — ${rows.length} row(s) returned${note ? ` <span style="color:#e65100">[${note}]</span>` : ''}
+            </div>
+            <table style="margin-top:10px">
+                <tr><th>id</th><th>username</th><th>password</th><th>role</th><th>balance</th></tr>
+                ${rowsHtml}
+            </table>`;
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    updateQuery();
+</script>
+</body>
+</html>

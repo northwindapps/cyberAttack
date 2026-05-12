@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SQL Injection Lab - Protected</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 700px; }
+        .header { background: #1b5e20; color: white; padding: 15px; border-radius: 6px; }
+        .safe-label { background: #c8e6c9; color: #1b5e20; padding: 3px 10px; border-radius: 4px; font-size: 13px; }
+        .card { border: 1px solid #ccc; padding: 15px; margin-top: 15px; border-radius: 6px; }
+        input { padding: 8px; width: 280px; margin: 4px 0; font-size: 14px; }
+        button { background: #1b5e20; color: white; padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .sql-box { background: #1e1e1e; color: #d4d4d4; padding: 12px; font-family: monospace; font-size: 13px; border-radius: 6px; margin-top: 8px; white-space: pre-wrap; }
+        .keyword { color: #569cd6; }
+        .param { color: #4ec9b0; font-weight: bold; }
+        .value-box { background: #2d2d2d; padding: 8px 12px; font-family: monospace; font-size: 13px; border-radius: 6px; margin-top: 6px; }
+        .value-row { margin: 3px 0; }
+        .param-name { color: #4ec9b0; }
+        .param-val { color: #ce9178; }
+        .result { padding: 12px; border-radius: 6px; margin-top: 10px; font-weight: bold; }
+        .success { background: #e8f5e9; color: #1b5e20; border-left: 4px solid #2e7d32; }
+        .fail { background: #ffebee; color: #b71c1c; border-left: 4px solid #c62828; }
+        .blocked { background: #fff3e0; color: #e65100; border-left: 4px solid #e65100; }
+        table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+        th { background: #424242; color: white; padding: 6px 10px; text-align: left; }
+        td { border: 1px solid #ddd; padding: 6px 10px; }
+        .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
+        .bad  { background: #ffebee; padding: 10px; border-radius: 6px; }
+        .good { background: #e8f5e9; padding: 10px; border-radius: 6px; }
+        code { background: #eee; padding: 2px 6px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2 style="margin:0">Login <span class="safe-label">PROTECTED — Parameterized Query</span></h2>
+    <p style="margin:4px 0 0; font-size:13px">Input is passed as a parameter — never concatenated into the SQL string.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Sign In</h3>
+    <label>Username:<br><input type="text" id="username" placeholder="e.g. admin" oninput="updateQuery()"></label><br><br>
+    <label>Password:<br><input type="password" id="password" placeholder="e.g. password123" oninput="updateQuery()"></label><br><br>
+    <button onclick="login()">Login</button>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Parameterized Query (what the server runs)</h3>
+    <div class="sql-box">
+<span class="keyword">SELECT</span> * <span class="keyword">FROM</span> users
+<span class="keyword">WHERE</span> username = <span class="param">$1</span>
+  <span class="keyword">AND</span> password = <span class="param">$2</span></div>
+
+    <p style="font-size:13px; color:#555; margin:8px 0 4px">Bound parameter values (sent separately from the query):</p>
+    <div class="value-box" id="paramDisplay"></div>
+
+    <p style="font-size:13px; color:#555; margin:12px 0 4px">
+        The database engine receives the query structure and the values <strong>separately</strong>.
+        No matter what the user types, <span class="param">$1</span> and <span class="param">$2</span>
+        are always treated as plain strings — never as SQL syntax.
+    </p>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+    <h3 style="margin-top:0">Result</h3>
+    <div id="resultBox"></div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Why This Works — Side by Side</h3>
+    <div class="compare">
+        <div class="bad">
+            <strong style="color:#b71c1c">Vulnerable (concatenation)</strong>
+            <pre style="margin:8px 0; font-size:12px">query = "SELECT * FROM users
+WHERE username='" + input + "'"</pre>
+            Input <code>' OR 1=1 --</code> becomes part of the SQL structure → attack works.
+        </div>
+        <div class="good">
+            <strong style="color:#1b5e20">Safe (parameterized)</strong>
+            <pre style="margin:8px 0; font-size:12px">query = "SELECT * FROM users
+WHERE username = $1"
+db.execute(query, [input])</pre>
+            Input <code>' OR 1=1 --</code> is passed as a literal string value → treated as a username, not SQL.
+        </div>
+    </div>
+
+    <p style="font-size:13px; margin-top:12px">
+        Try typing <code>' OR '1'='1' --</code> or <code>admin' --</code> as the username.
+        The query structure never changes — it always looks for a user literally named that string.
+    </p>
+</div>
+
+<script>
+    const users = [
+        { id: 1, username: 'admin',   password: 's3cr3tPass!', role: 'admin',  balance: '$99,999' },
+        { id: 2, username: 'alice',   password: 'alice1234',   role: 'user',   balance: '$1,200'  },
+        { id: 3, username: 'bob',     password: 'bobpass99',   role: 'user',   balance: '$450'    },
+        { id: 4, username: 'charlie', password: 'ch4rl1e!',    role: 'user',   balance: '$800'    },
+    ];
+
+    function updateQuery() {
+        const u = document.getElementById('username').value || '';
+        const p = document.getElementById('password').value || '';
+        document.getElementById('paramDisplay').innerHTML =
+            `<div class="value-row"><span class="param-name">$1 (username):</span> <span class="param-val">"${escapeHtml(u)}"</span></div>` +
+            `<div class="value-row"><span class="param-name">$2 (password):</span> <span class="param-val">"${escapeHtml(p)}"</span></div>`;
+    }
+
+    function login() {
+        const u = document.getElementById('username').value;
+        const p = document.getElementById('password').value;
+
+        const card = document.getElementById('resultCard');
+        const box  = document.getElementById('resultBox');
+        card.style.display = 'block';
+
+        // Parameterized: values compared as plain strings, never interpreted as SQL
+        const match = users.find(r => r.username === u && r.password === p);
+
+        const looksLikeInjection = /['";]|--|union|select|drop|or\s+\d/i.test(u + p);
+
+        if (match) {
+            box.innerHTML = `<div class="result success">Login SUCCESS — Welcome, ${escapeHtml(match.username)} (${match.role})</div>`;
+        } else if (looksLikeInjection) {
+            box.innerHTML = `
+                <div class="result blocked">
+                    Attack attempt detected in input — but it didn't work.<br>
+                    The database searched for a user literally named <strong>${escapeHtml(u)}</strong> — no such user exists.
+                </div>`;
+        } else {
+            box.innerHTML = `<div class="result fail">Login failed — invalid username or password.</div>`;
+        }
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    updateQuery();
+</script>
+</body>
+</html>

