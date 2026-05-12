@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>PhotoEdit Pro - OAuth2 Demo</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 650px; }
+        .header { background: #4527a0; color: white; padding: 15px; border-radius: 6px; }
+        .card { border: 1px solid #ccc; padding: 15px; margin-top: 15px; border-radius: 6px; }
+        .flow { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-family: monospace; }
+        .step { padding: 8px 12px; border-radius: 4px; border-left: 4px solid #ccc; background: #f5f5f5; }
+        .step.active { border-left-color: #4527a0; background: #ede7f6; }
+        .step.done   { border-left-color: #2e7d32; background: #e8f5e9; }
+        .step.current { border-left-color: #e65100; background: #fff3e0; font-weight: bold; }
+        button { background: #4527a0; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .scope-tag { display: inline-block; background: #e8eaf6; color: #283593; padding: 3px 10px; border-radius: 12px; font-size: 12px; margin: 2px; }
+        .token-box { background: #1e1e1e; color: #4ec9b0; padding: 10px; font-family: monospace; font-size: 12px; border-radius: 6px; word-break: break-all; }
+        .profile { display: flex; align-items: center; gap: 15px; margin-top: 10px; }
+        .avatar { width: 60px; height: 60px; border-radius: 50%; background: #7e57c2; color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; }
+        .url-box { background: #f5f5f5; padding: 8px; font-family: monospace; font-size: 11px; border-radius: 4px; word-break: break-all; color: #333; margin-top: 6px; }
+        .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+        .error { background: #ffebee; color: #b71c1c; border-left: 4px solid #c62828; padding: 10px; border-radius: 4px; }
+        .success { background: #e8f5e9; color: #1b5e20; border-left: 4px solid #2e7d32; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2 style="margin:0">PhotoEdit Pro</h2>
+    <p style="margin:4px 0 0; font-size:13px">A third-party app that wants access to your profile — without your password.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">OAuth2 Authorization Code Flow</h3>
+    <div class="flow">
+        <div class="step" id="s1">Step 1 — App redirects user to Auth Server with client_id + scopes</div>
+        <div class="step" id="s2">Step 2 — User logs in and approves on Auth Server</div>
+        <div class="step" id="s3">Step 3 — Auth Server redirects back with a one-time auth code</div>
+        <div class="step" id="s4">Step 4 — App exchanges auth code for an access token (server-to-server)</div>
+        <div class="step" id="s5">Step 5 — App uses token to fetch user data</div>
+    </div>
+</div>
+
+<div class="card" id="loginCard">
+    <h3 style="margin-top:0">Welcome to PhotoEdit Pro</h3>
+    <p>To continue, we need access to your SecureAuth account. We will request:</p>
+    <div>
+        <span class="scope-tag">profile</span>
+        <span class="scope-tag">email</span>
+        <span class="scope-tag">photos:read</span>
+    </div>
+    <br>
+
+    <div class="label">Authorization Request URL</div>
+    <div class="url-box" id="authUrl"></div>
+    <br>
+
+    <button onclick="startFlow()">Login with SecureAuth</button>
+    <p style="font-size:12px; color:#888">
+        You will be redirected to SecureAuth (the auth server).
+        Your password is entered there — this app never sees it.
+    </p>
+</div>
+
+<div class="card" id="callbackCard" style="display:none">
+    <h3 style="margin-top:0">Returned from Auth Server</h3>
+    <div id="callbackContent"></div>
+</div>
+
+<div class="card" id="tokenCard" style="display:none">
+    <h3 style="margin-top:0">Step 4 — Token Exchange</h3>
+    <p style="font-size:13px">App sends the auth code to the auth server's token endpoint:</p>
+    <div class="token-box" id="tokenRequest"></div>
+    <br>
+    <p style="font-size:13px">Auth server responds with an access token:</p>
+    <div class="token-box" id="tokenResponse"></div>
+</div>
+
+<div class="card" id="profileCard" style="display:none">
+    <h3 style="margin-top:0">Step 5 — User Data (fetched with token)</h3>
+    <div id="profileContent"></div>
+</div>
+
+<script>
+    const CLIENT_ID     = 'photoedit-pro-client-123';
+    const REDIRECT_URI  = 'http://127.0.0.1:5500/OAUTH2/app.html';
+    const AUTH_ENDPOINT = 'http://127.0.0.1:5500/OAUTH2/auth-server.html';
+    const SCOPES        = 'profile email photos:read';
+
+    // State parameter — random value to prevent CSRF on the OAuth flow itself
+    function getOrCreateState() {
+        let state = sessionStorage.getItem('oauth_state');
+        if (!state) {
+            state = Math.random().toString(36).substring(2, 15);
+            sessionStorage.setItem('oauth_state', state);
+        }
+        return state;
+    }
+
+    const state = getOrCreateState();
+
+    const authUrl = `${AUTH_ENDPOINT}?` +
+        `response_type=code` +
+        `&client_id=${CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+        `&scope=${encodeURIComponent(SCOPES)}` +
+        `&state=${state}`;
+
+    document.getElementById('authUrl').textContent = authUrl;
+
+    function markStep(n, status) {
+        document.getElementById('s' + n).className = 'step ' + status;
+    }
+
+    function startFlow() {
+        markStep(1, 'done');
+        markStep(2, 'current');
+        window.location.href = authUrl;
+    }
+
+    // Handle callback (auth server redirected back here with ?code= or ?error=)
+    const params = new URLSearchParams(window.location.search);
+    const code   = params.get('code');
+    const error  = params.get('error');
+    const returnedState = params.get('state');
+    const userData = params.get('user'); // passed by our simulated auth server
+
+    if (code || error) {
+        document.getElementById('loginCard').style.display = 'none';
+        document.getElementById('callbackCard').style.display = 'block';
+
+        markStep(1, 'done');
+        markStep(2, 'done');
+
+        if (error) {
+            markStep(3, 'current');
+            document.getElementById('callbackContent').innerHTML =
+                `<div class="error"><strong>Access denied.</strong> The user rejected the authorization request.<br>Error: ${error}</div>`;
+        } else {
+            // Verify state matches — prevents CSRF on the OAuth flow
+            const savedState = sessionStorage.getItem('oauth_state');
+            if (returnedState !== savedState) {
+                document.getElementById('callbackContent').innerHTML =
+                    `<div class="error"><strong>State mismatch — possible CSRF attack on OAuth flow. Request rejected.</strong></div>`;
+            } else {
+
+            markStep(3, 'done');
+            markStep(4, 'current');
+
+            document.getElementById('callbackContent').innerHTML =
+                `<div class="success">Auth code received from auth server.</div>
+                 <br>
+                 <div class="label">Auth Code (one-time use, short-lived)</div>
+                 <div class="token-box">${code}</div>
+                 <br>
+                 <div class="label">State verified</div>
+                 <div class="token-box">${returnedState} ✓ matches — not a CSRF attack</div>`;
+
+            // Simulate token exchange (in real life this is a server-to-server POST)
+            setTimeout(() => {
+                const user = JSON.parse(atob(userData));
+                const accessToken = 'eyJhbGciOiJIUzI1NiJ9.' + btoa(JSON.stringify({
+                    sub: user.id, name: user.name, scope: SCOPES,
+                    exp: Date.now() + 3600000
+                })) + '.SIGNATURE';
+
+                document.getElementById('tokenCard').style.display = 'block';
+                document.getElementById('tokenRequest').textContent =
+`POST /token HTTP/1.1
+Host: auth-server.example.com
+
+grant_type=authorization_code
+code=${code}
+redirect_uri=${REDIRECT_URI}
+client_id=${CLIENT_ID}
+client_secret=CLIENT_SECRET_NEVER_EXPOSED_TO_BROWSER`;
+
+                document.getElementById('tokenResponse').textContent =
+`{
+  "access_token": "${accessToken.substring(0, 60)}...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "${SCOPES}"
+}`;
+
+                markStep(4, 'done');
+                markStep(5, 'current');
+
+                setTimeout(() => {
+                    document.getElementById('profileCard').style.display = 'block';
+                    document.getElementById('profileContent').innerHTML = `
+                        <p style="font-size:13px">Request sent with token in Authorization header:</p>
+                        <div class="token-box">GET /userinfo HTTP/1.1\nAuthorization: Bearer ${accessToken.substring(0,40)}...</div>
+                        <div class="profile" style="margin-top:15px">
+                            <div class="avatar">${user.name[0]}</div>
+                            <div>
+                                <strong style="font-size:1.1em">${user.name}</strong><br>
+                                ${user.email}<br>
+                                <span class="scope-tag">profile</span>
+                                <span class="scope-tag">email</span>
+                                <span class="scope-tag">photos:read</span>
+                                <p style="font-size:12px; color:#555; margin:6px 0 0">
+                                    Token grants only these scopes — app cannot access anything else
+                                    (e.g. cannot send emails, cannot change password).
+                                </p>
+                            </div>
+                        </div>`;
+                    markStep(5, 'done');
+                    history.replaceState({}, '', location.pathname);
+                }, 800);
+            }, 600);
+            } // end state-match else
+        }
+    }
+</script>
+</body>
+</html>

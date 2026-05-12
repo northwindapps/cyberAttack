@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>SecureAuth - Authorization Server</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; }
+        .header { background: #1565c0; color: white; padding: 15px; border-radius: 6px; text-align: center; }
+        .card { border: 1px solid #ccc; padding: 20px; margin-top: 15px; border-radius: 6px; }
+        input { padding: 8px; width: 100%; box-sizing: border-box; margin: 4px 0 12px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
+        .btn-allow { background: #1565c0; color: white; padding: 10px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%; margin-bottom: 8px; }
+        .btn-deny  { background: white; color: #c62828; padding: 10px 24px; border: 1px solid #c62828; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%; }
+        .scope-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+        .scope-icon { font-size: 18px; }
+        .app-badge { background: #e3f2fd; border: 1px solid #90caf9; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 13px; }
+        .url-box { background: #f5f5f5; padding: 6px 10px; font-family: monospace; font-size: 11px; border-radius: 4px; word-break: break-all; color: #555; }
+        .warning { background: #fff8e1; border-left: 4px solid #f9a825; padding: 8px 12px; font-size: 12px; margin-top: 10px; }
+        .error { background: #ffebee; color: #b71c1c; padding: 12px; border-radius: 6px; }
+        .users-hint { font-size: 12px; color: #888; margin-top: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2 style="margin:0">SecureAuth</h2>
+    <p style="margin:4px 0 0; font-size:13px">Authorization Server — simulates Google / GitHub OAuth</p>
+</div>
+
+<div class="card" id="mainCard">
+    <div class="app-badge">
+        <strong id="clientName"></strong> is requesting access to your SecureAuth account.
+        <br><span style="color:#555">Redirect URI: </span><span class="url-box" id="redirectDisplay"></span>
+    </div>
+
+    <h3 style="margin-top:0">Sign in to SecureAuth</h3>
+    <label>Username<br>
+        <input type="text" id="username" placeholder="alice">
+    </label>
+    <label>Password<br>
+        <input type="password" id="password" placeholder="password">
+    </label>
+    <div class="users-hint">Demo users: alice / alice123 &nbsp;|&nbsp; bob / bob456 &nbsp;|&nbsp; admin / admin999</div>
+    <div id="loginError" style="display:none; color:#b71c1c; font-size:13px; margin:6px 0"></div>
+
+    <div id="scopeSection" style="display:none; margin-top:15px">
+        <h4 style="margin:0 0 8px">This app is requesting permission to:</h4>
+        <div id="scopeList"></div>
+
+        <div class="warning">
+            Only approve if you trust <strong id="appNameWarn"></strong>.
+            You can revoke access at any time in your SecureAuth settings.
+        </div>
+
+        <br>
+        <button class="btn-allow" onclick="approve()">Allow Access</button>
+        <button class="btn-deny"  onclick="deny()">Deny</button>
+    </div>
+
+    <div id="loginSection">
+        <br>
+        <button class="btn-allow" onclick="tryLogin()">Sign In</button>
+    </div>
+</div>
+
+<div class="card" id="errorCard" style="display:none">
+    <div class="error" id="errorContent"></div>
+</div>
+
+<script>
+    const SCOPE_DESCRIPTIONS = {
+        'profile':      { icon: '👤', label: 'View your name and profile picture' },
+        'email':        { icon: '📧', label: 'View your email address' },
+        'photos:read':  { icon: '🖼️', label: 'View your photos (read-only)' },
+        'photos:write': { icon: '🖼️', label: 'Upload and modify your photos' },
+        'contacts':     { icon: '📒', label: 'View your contacts' },
+    };
+
+    const USERS = {
+        alice: { id: 'u1', name: 'Alice Smith',   email: 'alice@example.com', password: 'alice123' },
+        bob:   { id: 'u2', name: 'Bob Johnson',   email: 'bob@example.com',   password: 'bob456'   },
+        admin: { id: 'u3', name: 'Admin User',    email: 'admin@example.com', password: 'admin999' },
+    };
+
+    const params      = new URLSearchParams(window.location.search);
+    const clientId    = params.get('client_id');
+    const redirectUri = params.get('redirect_uri');
+    const scopes      = (params.get('scope') || '').split(' ').filter(Boolean);
+    const state       = params.get('state');
+    const responseType = params.get('response_type');
+
+    // Validate the request
+    if (!clientId || !redirectUri || responseType !== 'code') {
+        document.getElementById('mainCard').style.display = 'none';
+        document.getElementById('errorCard').style.display = 'block';
+        document.getElementById('errorContent').textContent =
+            'Invalid OAuth2 request — missing client_id, redirect_uri, or response_type.';
+    } else {
+        // Show client name from client_id
+        const appName = clientId.replace(/-client-\d+$/, '').replace(/-/g, ' ');
+        document.getElementById('clientName').textContent = appName;
+        document.getElementById('appNameWarn').textContent = appName;
+        document.getElementById('redirectDisplay').textContent = redirectUri;
+
+        // Render scope list
+        const scopeList = document.getElementById('scopeList');
+        scopes.forEach(s => {
+            const info = SCOPE_DESCRIPTIONS[s] || { icon: '?', label: s };
+            scopeList.innerHTML += `
+                <div class="scope-item">
+                    <span class="scope-icon">${info.icon}</span>
+                    <span>${info.label}</span>
+                </div>`;
+        });
+    }
+
+    let loggedInUser = null;
+
+    function tryLogin() {
+        const u = document.getElementById('username').value.trim().toLowerCase();
+        const p = document.getElementById('password').value;
+        const errEl = document.getElementById('loginError');
+
+        if (!USERS[u] || USERS[u].password !== p) {
+            errEl.textContent = 'Invalid username or password.';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        loggedInUser = USERS[u];
+        errEl.style.display = 'none';
+        document.getElementById('loginSection').style.display = 'none';
+        document.getElementById('scopeSection').style.display = 'block';
+    }
+
+    function approve() {
+        if (!loggedInUser) return;
+
+        // Generate a short-lived, one-time auth code
+        const authCode = 'code_' + Math.random().toString(36).substring(2, 12) + Date.now();
+
+        // In real OAuth2: store code server-side, associate with user + scopes
+        // Here: encode user data in the redirect for demo purposes
+        const userPayload = btoa(JSON.stringify({
+            id: loggedInUser.id,
+            name: loggedInUser.name,
+            email: loggedInUser.email
+        }));
+
+        const callback = redirectUri +
+            '?code=' + authCode +
+            '&state=' + encodeURIComponent(state) +
+            '&user=' + encodeURIComponent(userPayload);
+
+        window.location.href = callback;
+    }
+
+    function deny() {
+        window.location.href = redirectUri + '?error=access_denied&state=' + encodeURIComponent(state);
+    }
+</script>
+</body>
+</html>
